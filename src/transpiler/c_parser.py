@@ -11,8 +11,8 @@ def parse_c_file(file_path: str | pydantic.FilePath) -> Any:
         ast = parse_file(
             file_path,
             use_cpp=True,
-            cpp_path="cpp",
-            cpp_args=["-E"],
+            cpp_path="gcc",
+            cpp_args=["-E", "-std=c99"],
         )
     except Exception as e:
         e.add_note(
@@ -20,5 +20,5 @@ def parse_c_file(file_path: str | pydantic.FilePath) -> Any:
             f"Please ensure the file is valid C code and does NOT contain any STD or 3rd-party #includes."
         )
         raise
-    ast.show()
+    # ast.show()
     return ast

@@ -2,6 +2,7 @@ import os
 import sys
 from typing import Any, List, Union, Optional
 
+import astor
 import typer
 import pydantic
 
@@ -11,10 +12,10 @@ from transpiler.ast_converter import CtoPythonVisitor
 
 def transpile(source_file: str, target_file: str) -> None:
     c_ast = parse_c_file(source_file)
-    visitor = CtoPythonVisitor()
-    visitor.visit(c_ast)
-    python_ast = visitor.result
-    print()
+    visitor = CtoPythonVisitor(c_ast)
+    python_ast = visitor.run()
+    source_code = astor.to_source(python_ast)
+    print(source_code)
 
 
 def main(source_file: str, target_file: str) -> None:
