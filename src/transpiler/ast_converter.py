@@ -28,14 +28,14 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
         if node is None:
             return ""
         else:
-            print(
-                f"Warning: Conversion not implemented for node type: {node.__class__.__name__}"
-            )
-            return list(self.visit(c) for c_name, c in node.children())
+            # print(
+            #     f"Warning: Conversion not implemented for node type: {node.__class__.__name__}"
+            # )
+            # return list(self.visit(c) for c_name, c in node.children())
 
-        # raise NotImplementedError(
-        #     f"Conversion not implemented for node type: {node.__class__.__name__}"
-        # )
+            raise NotImplementedError(
+                f"Conversion not implemented for node type: {node.__class__.__name__}"
+            )
 
     def visit_FileAST(self, node: c_ast.FileAST):
         body = [self.visit(child) for child in node.ext]
@@ -43,9 +43,24 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
 
     def visit_FuncDef(self, node: c_ast.FuncDef):
         name = node.decl.name
-        args = self.visit(node.decl.type.args)
+        args = []
+        if node.decl.type.args:
+            args = [self.visit(param) for param in node.decl.type.args.params]
         body = [self.visit(child) for child in node.body.block_items]
-        return ast.FunctionDef(name=name, args=args, body=body)
+        func_def = ast.FunctionDef(
+            name=name,
+            args=ast.arguments(args=args, vararg=None, kwarg=None, defaults=[]),
+            body=body,
+            decorator_list=[],
+            returns=None,
+        )
+        return func_def
+
+    def visit_Return(self, node):
+        if node.expr:
+            return ast.Return(value=self.visit(node.expr))
+        else:
+            return ast.Return(value=None)
 
     def visit_ParamList(self, node: c_ast.ParamList):
         args = [self.visit(param) for param in node.params]
@@ -59,13 +74,59 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
         match node.type.__class__:
             case c_ast.TypeDecl:
                 # Variable declaration
-                var_type = self.visit(node.type)
-                var_def = ast.AnnAssign(
-                    target=ast.Name(id=name, ctx=ast.Store()),
-                    annotation=var_type,
-                    value=None,
-                    simple=1,
-                )
+                # `Fibonacci fib;` -> `fib = Fibonacci()`
+                var_type = self.visit(node.type.type)
+                if not node.init:
+                    return ast.AnnAssign(
+                        target=ast.Name(id=name, ctx=ast.Store()),
+                        annotation=var_type,
+                        value=ast.Call(func=var_type, args=[], keywords=[]),
+                        simple=1,
+                    )
+                else:
+                    match node.init.__class__:
+                        case c_ast.Constant:
+                            # `int a = 5;` -> `a = 5`
+                            return ast.AnnAssign(
+                                target=ast.Name(id=name, ctx=ast.Store()),
+                                annotation=var_type,
+                                value=self.visit(node.init),
+                                simple=1,
+                            )
+                        case c_ast.InitList:
+                            # `Fibonacci fib = {1, 2};` -> `fib = Fibonacci(1, 2)`
+
+                            return ast.AnnAssign(
+                                target=ast.Name(id=name, ctx=ast.Store()),
+                                annotation=var_type,
+                                value=ast.Call(
+                                    func=var_type,
+                                    args=[self.visit(arg) for arg in node.init.exprs],
+                                    keywords=[],
+                                ),
+                                simple=1,
+                            )
+
+            case c_ast.PtrDecl:
+                # Pointer declaration
+                # `int *p;` -> `p = None`
+                # `int *p = &x;` -> `p = x`
+                var_type = self.visit(node.type.type)
+                if not node.init:
+                    var_def = ast.AnnAssign(
+                        target=ast.Name(id=name, ctx=ast.Store()),
+                        annotation=var_type,
+                        value=None,
+                        simple=1,
+                    )
+                else:
+                    var_value = self.visit(node.init)
+                    var_def = ast.AnnAssign(
+                        target=ast.Name(id=name, ctx=ast.Store()),
+                        annotation=var_type,
+                        value=var_value,
+                        simple=1,
+                    )
                 return var_def
             case c_ast.Struct:
                 # Struct declaration
@@ -107,11 +168,16 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
         return typedef_def
 
     def visit_TypeDecl(self, node: c_ast.TypeDecl):
-        if isinstance(node.type, c_ast.Struct):
-            struct = self.visit(node.type)
-            struct.name = node.declname
-            return struct
-        return ast.Name(id=node.declname, ctx=ast.Param())
+        match node.type.__class__:
+            case c_ast.IdentifierType:
+                return ast.Name(id=node.type.names[0], ctx=ast.Load())
+            case c_ast.Struct:
+                # Struct type
+                struct = self.visit(node.type)
+                struct.name = node.declname
+                return struct
+            case _:
+                return ast.Name(id=node.declname, ctx=ast.Param())
 
     def visit_Struct(self, node: c_ast.Struct):
         struct_name = node.name
@@ -156,13 +222,19 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
 
     def visit_Constant(self, node: c_ast.Constant):
         value = node.value
-        if isinstance(node.type, c_ast.TypeDecl) and isinstance(
-            node.type.type, c_ast.IdentifierType
-        ):
-            type_names = node.type.type.names
-            if "float" in type_names or "double" in type_names:
+        match node.type:
+            case "char":
+                return ast.Constant(value=str(value), kind=None)
+            case "int":
+                return ast.Constant(value=int(value), kind=None)
+            case "float":
                 return ast.Constant(value=float(value), kind=None)
-        return ast.Constant(value=value, kind=None)
+            case "double":
+                return ast.Constant(value=float(value), kind=None)
+            case _:
+                raise NotImplementedError(
+                    f"Conversion not implemented for constant type: {node.type}"
+                )
 
     def visit_Assignment(self, node: c_ast.Assignment):
         target = self.visit(node.lvalue)
@@ -178,13 +250,6 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
             else []
         )
         return ast.If(test=test, body=body, orelse=orelse)
-
-    # def visit_FuncDecl(self, node: c_ast.FuncDecl):
-    #     return ast.Expr(value=None)
-
-    def visit_PtrDecl(self, node: c_ast.PtrDecl):
-        type_node = self.visit(node.type)
-        return ast.Subscript(value=type_node, slice=ast.Ellipsis())
 
     def visit_NoneType(self, node: None):
         return ast.Name(id="None", ctx=ast.Load())
@@ -205,21 +270,15 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
     def visit_UnaryOp(self, node: c_ast.UnaryOp):
         print(f"UnaryOp: {node.op} {node.expr}")
         operand = self.visit(node.expr)
-        return ast.Expr(value=None)
-        # match node.op:
-        #     case "sizeof":
-        #         return ast.Call(
-        #             func=ast.Name(id="sizeof", ctx=ast.Load()),
-        #             args=[self.visit(node.expr)],
-        #             keywords=[],
-        #         )
-        #     case "p++":
-        #         return ast.Add()
-        #         return ast.UnaryOp(target=self.visit(node.expr))
-        #     case "p--":
-        #         return ast.Decr(target=self.visit(node.expr))
-        #     case _:
-        #         operand = self.visit(node.expr)
+        match node.op:
+            case "*":
+                # skip dereference
+                return self.visit(node.expr)
+            case "&":
+                # skip address-of
+                return self.visit(node.expr)
+            case _:
+                raise NotImplementedError(f"{node.op} is not implemented yet")
 
         # if node.op == "sizeof":
         #     # Always parenthesize the argument of sizeof since it can be
