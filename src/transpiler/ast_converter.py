@@ -64,7 +64,7 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
             args=ast.arguments(args=args, vararg=None, kwarg=None, defaults=[]),
             body=body,
             decorator_list=[],
-            returns=None,
+            returns=self.visit(node.decl.type.type.type),
         )
         return func_def
 
