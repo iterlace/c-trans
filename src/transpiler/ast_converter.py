@@ -9,6 +9,8 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
         self.c_root = c_root
         self.imports: List[ast.Import] = []
         self.result = None
+        self.parents = []
+        self.parents_and_self = []
 
     def run(self):
         self.imports = []
@@ -21,12 +23,17 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
     def visit(self, node: c_ast.Node):
         method_name = "visit_" + node.__class__.__name__
         visitor = getattr(self, method_name, self.generic_visit)
+        self.parents = self.parents_and_self[:]
+        self.parents_and_self.append(node)
         result = visitor(node)
+        if self.parents:
+            self.parents.pop()
+        self.parents_and_self.pop()
         return result
 
     def generic_visit(self, node):
         if node is None:
-            return ""
+            return ast.Expr(None)
         else:
             # print(
             #     f"Warning: Conversion not implemented for node type: {node.__class__.__name__}"
@@ -45,15 +52,13 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
         name = node.decl.name
         args = []
         if node.decl.type.args:
-            args = [self.visit(param) for param in node.decl.type.args.params]
-        body = []
-        for child in node.body.block_items:
-            transpiled = self.visit(child)
-            if isinstance(transpiled, ast.Call):
-                # wrap function calls in an expression statement so that it would be rendered on a new line
-                transpiled = ast.Expr(transpiled)
-            body.append(transpiled)
-
+            for param in node.decl.type.args.params:
+                transpiled = ast.arg(
+                    arg=param.name,
+                    annotation=self.visit(param.type.type),
+                )
+                args.append(transpiled)
+        body = [self.visit(child) for child in node.body.block_items]
         func_def = ast.FunctionDef(
             name=name,
             args=ast.arguments(args=args, vararg=None, kwarg=None, defaults=[]),
@@ -62,6 +67,18 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
             returns=None,
         )
         return func_def
+
+    def visit_For(self, node: c_ast.For):
+        init = self.visit(node.init)
+        cond = self.visit(node.cond)
+        next_expr = self.visit(node.next)
+
+        body = [self.visit(child) for child in node.stmt.block_items]
+
+        for_node = ast.While(init=init, test=cond, orelse=[], body=body)
+        for_node.body.append(next_expr)
+
+        return for_node
 
     def visit_Return(self, node):
         if node.expr:
@@ -92,14 +109,6 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
                     )
                 else:
                     match node.init.__class__:
-                        case c_ast.Constant:
-                            # `int a = 5;` -> `a = 5`
-                            return ast.AnnAssign(
-                                target=ast.Name(id=name, ctx=ast.Store()),
-                                annotation=var_type,
-                                value=self.visit(node.init),
-                                simple=1,
-                            )
                         case c_ast.InitList:
                             # `Fibonacci fib = {1, 2};` -> `fib = Fibonacci(1, 2)`
 
@@ -111,6 +120,14 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
                                     args=[self.visit(arg) for arg in node.init.exprs],
                                     keywords=[],
                                 ),
+                                simple=1,
+                            )
+                        case _:
+                            # `int a = 5;` -> `a = 5`
+                            return ast.AnnAssign(
+                                target=ast.Name(id=name, ctx=ast.Store()),
+                                annotation=var_type,
+                                value=self.visit(node.init),
                                 simple=1,
                             )
 
@@ -195,7 +212,10 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
             field_def = ast.AnnAssign(
                 target=ast.Name(id=field_name, ctx=ast.Store()),
                 annotation=field_type,
-                value=None,
+                # Since C data types have default values, we need to imitate that in Python
+                value=ast.Call(func=field_type, args=[], keywords=[])
+                if field_type
+                else None,
                 simple=1,
             )
             fields.append(field_def)
@@ -271,9 +291,19 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
 
     def visit_FuncCall(self, node: c_ast.FuncCall):
         func = self.visit(node.name)
-        args = [self.visit(arg) for arg in node.args.exprs]
+        if node.args:
+            args = [self.visit(arg) for arg in node.args.exprs]
+        else:
+            args = []
         func_call = ast.Call(func=func, args=args, keywords=[])
-        ast.increment_lineno(func_call)
+        print([i.__class__ for i in self.parents])
+        if self.parents[-1].__class__ in (
+            c_ast.FuncDef,
+            c_ast.For,
+            c_ast.While,
+            c_ast.DoWhile,
+        ):
+            func_call = ast.Expr(value=func_call)
         return func_call
 
     def visit_UnaryOp(self, node: c_ast.UnaryOp):
@@ -286,6 +316,19 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
             case "&":
                 # skip address-of
                 return operand
+            case "p++":
+                # post-increment
+                if isinstance(node.expr, c_ast.ID):
+                    # Increment operator applied to a variable
+                    return ast.AugAssign(
+                        target=ast.Name(id=node.expr.name, ctx=ast.Store()),
+                        op=ast.Add(),
+                        value=ast.Constant(value=1),
+                    )
+                else:
+                    raise NotImplementedError(
+                        f"Conversion not implemented for {node.op} applied to expression"
+                    )
             case _:
                 raise NotImplementedError(f"{node.op} is not implemented yet")
 

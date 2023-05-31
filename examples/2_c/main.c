@@ -25,23 +25,28 @@ int main() {
     ll n = 100000000000000;  // Number of Fibonacci numbers to generate
 
     fibonacciSequence(&fib, n);
-    a = fibonacciSequence(fibonacciSequence(&fib, n)-1, n);
+    fib2_sequence = fibonacciSequence(fib2, random_int(0, 100));
 
     return 0;
 }
 
-//void fibonacciSequence(Fibonacci* fib, int n) {
-//    int i;
-//    for (i = 0; i < n; i++) {
-//        int current = fib->current;
-//        int next = fib->next;
-//
-//        // Calculate the next Fibonacci number
-//        int temp = current;
-//        current = next;
-//        next = temp + next;
-//
-//        fib->current = current;
-//        fib->next = next;
-//    }
-//}
+int random_int(int min, int max) {
+    return min + rand() % (max - min + 1);
+}
+
+void fibonacciSequence(Fibonacci* fib, int n) {
+    int i;
+    for (i = 0; i < n; i++) {
+        int current = fib->current;
+        int next = fib->next;
+
+        // Calculate the next Fibonacci number
+        int temp = current;
+        current = next;
+        next = temp + next;
+
+        fib->current = current;
+        fib->next = next;
+    }
+}
+

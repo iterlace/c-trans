@@ -16,6 +16,8 @@ def transpile(source_file: str, target_file: str) -> None:
     python_ast = visitor.run()
     source_code = astor.to_source(python_ast)
     print(source_code)
+    with open(target_file, "w") as f:
+        f.write(source_code)
 
 
 def main(source_file: str, target_file: str) -> None:
