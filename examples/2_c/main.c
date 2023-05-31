@@ -24,7 +24,8 @@ int main() {
 
     ll n = 100000000000000;  // Number of Fibonacci numbers to generate
 
-//    fibonacciSequence(&fib, n);
+    fibonacciSequence(&fib, n);
+    a = fibonacciSequence(fibonacciSequence(&fib, n)-1, n);
 
     return 0;
 }

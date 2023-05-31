@@ -46,7 +46,14 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
         args = []
         if node.decl.type.args:
             args = [self.visit(param) for param in node.decl.type.args.params]
-        body = [self.visit(child) for child in node.body.block_items]
+        body = []
+        for child in node.body.block_items:
+            transpiled = self.visit(child)
+            if isinstance(transpiled, ast.Call):
+                # wrap function calls in an expression statement so that it would be rendered on a new line
+                transpiled = ast.Expr(transpiled)
+            body.append(transpiled)
+
         func_def = ast.FunctionDef(
             name=name,
             args=ast.arguments(args=args, vararg=None, kwarg=None, defaults=[]),
@@ -265,7 +272,9 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
     def visit_FuncCall(self, node: c_ast.FuncCall):
         func = self.visit(node.name)
         args = [self.visit(arg) for arg in node.args.exprs]
-        return ast.Call(func=func, args=args, keywords=[])
+        func_call = ast.Call(func=func, args=args, keywords=[])
+        ast.increment_lineno(func_call)
+        return func_call
 
     def visit_UnaryOp(self, node: c_ast.UnaryOp):
         print(f"UnaryOp: {node.op} {node.expr}")
@@ -279,3 +288,40 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
                 return operand
             case _:
                 raise NotImplementedError(f"{node.op} is not implemented yet")
+
+    def visit_BinaryOp(self, node):
+        left = self.visit(node.left)
+        right = self.visit(node.right)
+
+        # Mapping of C binary operators to Python binary operators
+        operator_mapping = {
+            "+": ast.Add(),
+            "-": ast.Sub(),
+            "*": ast.Mult(),
+            "/": ast.Div(),
+            "%": ast.Mod(),
+            "<": ast.Lt(),
+            "<=": ast.LtE(),
+            ">": ast.Gt(),
+            ">=": ast.GtE(),
+            "==": ast.Eq(),
+            "!=": ast.NotEq(),
+            "&&": ast.And(),
+            "||": ast.Or(),
+            "&": ast.BitAnd(),
+            "|": ast.BitOr(),
+            "^": ast.BitXor(),
+            "<<": ast.LShift(),
+            ">>": ast.RShift(),
+        }
+
+        # Check if the operator is supported
+        if node.op not in operator_mapping:
+            raise NotImplementedError(
+                f"Conversion not implemented for binary operator: {node.op}"
+            )
+
+        operator = operator_mapping[node.op]
+        binary_op = ast.BinOp(left=left, op=operator, right=right)
+
+        return binary_op
