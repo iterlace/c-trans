@@ -1,7 +1,7 @@
 import ast
 from typing import List
 
-from pycparser import c_ast, parse_file
+from pycparser import c_ast
 
 
 class CtoPythonVisitor(c_ast.NodeVisitor):
@@ -273,28 +273,9 @@ class CtoPythonVisitor(c_ast.NodeVisitor):
         match node.op:
             case "*":
                 # skip dereference
-                return self.visit(node.expr)
+                return operand
             case "&":
                 # skip address-of
-                return self.visit(node.expr)
+                return operand
             case _:
                 raise NotImplementedError(f"{node.op} is not implemented yet")
-
-        # if node.op == "sizeof":
-        #     # Always parenthesize the argument of sizeof since it can be
-        #     # a name.
-        #     return "sizeof(%s)" % self.visit(n.expr)
-        # else:
-        #     operand = self._parenthesize_unless_simple(n.expr)
-        #     if node.op == "p++":
-        #         return "%s++" % operand
-        #     elif node.op == "p--":
-        #         return "%s--" % operand
-        #     else:
-        #         return "%s%s" % (node.op, operand)
-        #
-        # # op = self.visit(node.op)
-        #
-        # if isinstance(node.op, c_ast.UnaryOp) and node.op.op == "&":
-        #     return operand  # Skip address-of (&) operator
-        # return ast.UnaryOp(op=op, operand=operand)
